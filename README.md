@@ -1,109 +1,141 @@
-📊 Piso Patrol - Personal Finance Dashboard
+# 📊 Piso Patrol — Personal Finance Dashboard
 
-Welcome to Cash Cohort, a comprehensive personal finance analytics app built with Streamlit. This tool transforms your raw transaction data from CSVs or Google Sheets into a powerful, interactive dashboard. It's designed to help you not just track your spending, but truly understand your financial habits, set goals, and find new ways to save.
+**Cash Cohort** is a comprehensive personal finance analytics app built with **Streamlit**.  
+It transforms your raw transaction data — from CSVs or Google Sheets — into an **interactive dashboard** designed to help you not just track your spending, but truly understand your financial habits, set goals, and find new ways to save.
 
-✨ Key Features
+---
 
-Flexible Data Loading: Import your data from a CSV file or directly from a public Google Sheet. A sample dataset is also included to get you started instantly.
+## ✨ Key Features
 
-Intelligent Data Mapping: The app automatically detects standard columns (Date, Amount, Category). For non-standard files, it provides a powerful UI to map your columns to the app's schema.
+### 🔹 Flexible Data Loading
+Import data from:
+- A local **CSV file**
+- A **public Google Sheet**
+- Or use a **sample dataset** to get started instantly.
 
-Interactive Data Editor: Clean your data after loading. Fix typos, re-categorize transactions (e.g., from Expense to Stash), or add missed cash purchases using an Excel-like data editor.
+### 🔹 Intelligent Data Mapping
+- Automatically detects standard columns (`Date`, `Amount`, `Category`).
+- Includes a powerful **manual mapping interface** for non-standard files.
+- Ensures your data aligns perfectly with the app’s schema.
 
-🏦 Stash & Goal Setting: Define specific savings goals (e.g., "Vacation Fund," "New Car"). The app will track your "deposits" (re-categorized expenses) and show your progress toward each goal with clear attainment bars.
+### 🔹 Interactive Data Editor
+- Clean, re-categorize, or enrich your transactions after loading.
+- Fix typos, change categories (e.g., from *Expense* → *Stash*), or add missed cash purchases.
+- Works like an Excel-style grid with full edit and save functionality.
 
-Deep Dive Dashboards:
+### 🏦 Stashes & Goal Setting
+- Define specific **savings goals** (e.g., *Vacation Fund*, *New Car*).
+- Track “deposits” re-classified from expenses.
+- View **progress bars** and goal attainment metrics per stash.
 
-Overview: A high-level command center showing your total income, expenses, stashes, and net savings with cumulative charts and category breakdowns.
+---
 
-Expenses: A detailed analysis of your spending with automated insights (MoM changes, spending pace alerts), trend analysis (daily, weekly, monthly), a treemap, a bubble chart, and a full transaction log.
+## 📈 Deep-Dive Dashboards
 
-Income: A clear summary of your earnings with YTD change analysis, income source breakdowns, and monthly trends.
+### **Overview**
+A high-level command center showing:
+- Total income, expenses, stashes, and net savings
+- Cumulative charts and financial health trends
+- Category-level breakdowns for fast insight
 
-Stashes: A dedicated page to track your savings goals, showing your progress, total contributions, and goal attainment.
+### **Expenses**
+- Advanced analytics for spending patterns  
+- Automated insights (MoM change, spending pace alerts)  
+- Visuals: Daily/weekly/monthly trends, treemap, bubble chart  
+- Full searchable transaction log
 
-Advanced Analytics:
+### **Income**
+- Clear summaries of earnings over time  
+- Source breakdowns and monthly trends  
+- YTD change analysis and distribution charts
 
-Automated Insights: Get plain-English insights like, "Your 'Family & Friends' spending was $550 this month, a 22% increase from $450 last month."
+### **Stashes**
+- Dedicated page for tracking savings goals  
+- Displays contributions, average deposit size, and progress toward goals
 
-Category Clustering: A special data science section that uses K-Means clustering to analyze your spending habits and group your categories into "cohorts" (e.g., "Large & Fixed," "Daily Essentials").
+---
 
-🚀 Getting Started
+## 🧮 Advanced Analytics
 
-Follow these steps to get the app running on your local machine.
+### 🤖 Automated Insights
+Get contextual English summaries like:  
+> *“Your ‘Family & Friends’ spending was ₱550 this month — a 22 % increase from ₱450 last month.”*
 
-1. Prerequisites
+### 🧩 Category Clustering
+A mini data-science section using **K-Means clustering** to analyze your spending patterns and group categories into cohorts such as:
+- *Large & Fixed*
+- *Daily Essentials*
+- *Lifestyle Flex*
 
-Python 3.8+
+---
 
-pip (Python package installer)
+## 🚀 Getting Started
 
-2. Installation
+Follow these steps to run **Cash Cohort** locally.
 
-Clone the repository:
+### 1️⃣ Prerequisites
+- Python **3.8+**
+- **pip** (Python package manager)
 
-git clone [https://github.com/your-username/your-repo-name.git](https://github.com/your-username/your-repo-name.git)
+### 2️⃣ Installation
+
+Clone this repository:
+
+```bash
+git clone https://github.com/your-username/your-repo-name.git
 cd your-repo-name
-
-
-
-Create a virtual environment (Recommended):
-
-# For Mac/Linux
+```
+Create a virtual environment (recommended):
+```bash
+# Mac / Linux
 python3 -m venv .venv
 source .venv/bin/activate
 
-# For Windows
+# Windows
 python -m venv .venv
 .\.venv\Scripts\activate
+```
 
-
-
-Install the required libraries:
-The project includes a requirements.txt file with all necessary packages.
-
+Install dependencies:
+```bash
 pip install -r requirements.txt
+```
 
+### 3️⃣ Run the App
 
-
-3. Running the App
-
-Run the Streamlit app:
-Make sure you are in the root directory of the project (the one containing 1_Home.py).
-
+From the project root (the folder containing 1_Home.py):
+```bash
 streamlit run 1_Home.py
+```
+Streamlit will automatically open in your default browser.
+If not, copy the local URL shown in your terminal (e.g. http://localhost:8501).
 
-
-
-View in your browser:
-Streamlit will automatically open a new tab in your default browser. If it doesn't, your terminal will show a local URL (e.g., http://localhost:8501) that you can open.
-
-4. How to Use
-
-Start on the "Data Mapping" page: This is the first and most important step.
-
-Load Your Data: Choose to upload a CSV, paste a Google Sheet link, or load the sample data.
-
-Process Data: The app will try to auto-process your data. If it fails, or if you want to make changes, use the "Manual Column Mapping" tools and click "Process & Save".
-
-Define Stashes: Use "Step 4" on the Data Mapping page to set your savings goals.
-
-Explore!: You're all set. Navigate to the Overview, Expenses, Income, Stashes, and Cluster Analysis pages to explore your financial world.
-
-📦 Project Structure
-
+## 📦 Project Structure
+```bash
 your-repo-name/
 │
-├── 1_Home.py             # The main welcome page
-├── utils.py              # Shared utility functions (e.g., currency selector)
-├── requirements.txt      # All Python package dependencies
-├── data.csv              # (Optional) Your local data file
+├── 1_Home.py                   # Main welcome page
+├── utils.py                    # Shared utility functions (e.g., currency selector)
+├── requirements.txt            # Python dependencies
+├── data.csv                    # (Optional) Sample data file
 │
-└── pages/                # Contains all the sub-pages of the app
+└── pages/                      # App sub-pages
     ├── 2_Data_Mapping.py
     ├── 3_Overview.py
     ├── 4_Expenses.py
     ├── 5_Income.py
     ├── 6_Stashes.py
     └── 7_Category_Cluster_Analysis.py
+```
 
+## 👤 Author
+
+**Arvin Escolano**  
+Senior Data Analyst | Data Visualization & Automation Enthusiast  
+
+- 🌙 Based in Manila — thriving on night-shift creativity  
+- 🧠 Passionate about turning data into actionable insights through clean design and storytelling  
+- 💼 Skilled in Python, SQL, Streamlit, and data automation workflows  
+
+📫 **Connect with me:**  
+[💼 LinkedIn](https://linkedin.com/in/arvin-jay-escolano) • [🐙 GitHub](https://github.com/the-arvin) • [✉️ Email](mailto:ajescolano@gmail.com)
