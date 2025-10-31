@@ -80,7 +80,7 @@ def home_page():
             """
             Tired of manually logging every transaction? You can automate most of this workflow!
             
-            1.  **Use an AI Assistant:** Use an AI like ChatGPT or Gemini with the `AI_ASSISTANT_PROMPT.md` file found in this app's [GitHub repository](https://github.com/your-username/your-repo/blob/main/AI_ASSISTANT_PROMPT.md).
+            1.  **Use an AI Assistant:** Use an AI like ChatGPT or Gemini with the `AI_ASSISTANT_PROMPT.md` file found in this app's [GitHub repository](https://github.com/the-arvin/piso_patrol/blob/main/ai_assistant_prompt.md).
             2.  **Log on the Go:** Simply send your AI assistant text messages (e.g., *"₱500 groceries at SM"*) or upload receipt photos.
             3.  **Export to Google Sheets:** The prompt instructs the AI to log everything and export it as a CSV-formatted text.
             4.  **Connect to this App:** Just paste that text into your connected Google Sheet, and your dashboard will update automatically.
