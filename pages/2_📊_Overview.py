@@ -1,12 +1,13 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import plotly.express as px # Added missing import
+import plotly.express as px # Still needed for colors
 from datetime import datetime, timedelta
-from utils import add_currency_selector # Import the new function
+from utils import add_currency_selector ,display_global_date_filter
+import numpy as np # Ensure numpy is imported
 
 st.set_page_config(
-    page_title="Financial Overview",
+    page_title="Piso Patrol - Overview",
     page_icon="📊",
     layout="wide"
 )
@@ -17,176 +18,174 @@ def overview_page():
     """
     add_currency_selector() # Add the currency selector to the sidebar
     currency_symbol = st.session_state.get("currency_symbol", "$")
-
+    display_global_date_filter() # Display the global date filter if applicable
+    
     st.title("📊 Financial Overview")
     st.markdown("Your financial command center. Get a bird's-eye view of your income, expenses, and savings for any period.")
 
     if "processed_data" not in st.session_state or st.session_state.processed_data.empty:
         st.warning("We don't have any data to analyze yet! 📂 Please head over to the 'Data Mapping' page to upload and process your financial data first.", icon="⚠️")
-        st.page_link("pages/2_Data_Mapping.py", label="Go to Data Mapping", icon="🗺️")
+        st.page_link("pages/1_📑_Data_Mapping.py", label="Go to Data Mapping", icon="🗺️")
         return
-
+    
     df = st.session_state.processed_data
-    
-    # Ensure Date column is datetime before filtering
-    if not pd.api.types.is_datetime64_any_dtype(df['Date']):
-        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-        df = df.dropna(subset=['Date'])
-        st.session_state.processed_data = df # Save back to session state
+    # Ensure Date column is in datetime format
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
 
-
+    if st.session_state.get("global_start_date") is not None and st.session_state.get("global_end_date") is not None:
+        start_date = st.session_state.get("global_start_date")
+        end_date = st.session_state.get("global_end_date")
+        date_mask = (df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date)
+        df = df[date_mask]
+        
     # --- Data Filtering ---
-    
     st.header("🗓️ Select Your Filters")
-    st.markdown("Slice and dice your data just the way you like it! 🕵️‍♀️ Use the filters below to focus on specific accounts, categories, or time periods.")
+    st.markdown("Slice and dice your data just the way you like it! 🕵️‍♀️ Use the filters below to focus on specific accounts, categories, or subcategories.")
     with st.expander("Filters available here:",expanded=False):
 
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            # --- Date Filtering ---
-            today = datetime.now().date()
-            min_date = df['Date'].min().date()
-            max_date = df['Date'].max().date()
-
-            date_options = [
-                "All Time", "This Week", "This Month", "Last 30 Days", "This Quarter",
-                "Year to Date", "Custom"
-            ]
-
-            selected_option = st.selectbox("Choose a date range", date_options)
-
-            if selected_option == "This Week":
-                start_date = today - timedelta(days=today.weekday())
-                end_date = today
-            elif selected_option == "This Month":
-                start_date = today.replace(day=1)
-                end_date = today
-            elif selected_option == "Last 30 Days":
-                start_date = today - timedelta(days=30)
-                end_date = today
-            elif selected_option == "This Quarter":
-                quarter_start_month = (today.month - 1) // 3 * 3 + 1
-                start_date = today.replace(month=quarter_start_month, day=1)
-                end_date = today
-            elif selected_option == "Year to Date":
-                start_date = today.replace(month=1, day=1)
-                end_date = today
-            elif selected_option == "All Time":
-                start_date = min_date
-                end_date = max_date
-            else: # Custom
-                if min_date > max_date:
-                    start_date, end_date = st.date_input("Select your custom date range", (max_date, max_date), min_value=max_date, max_value=max_date)
-                else:
-                    start_date, end_date = st.date_input(
-                        "Select your custom date range",
-                        (min_date, max_date),
-                        min_value=min_date,
-                        max_value=max_date
-                    )
-
+        col2, col3 = st.columns(2)
+        
+        # --- New Cascading Filters ---
         with col2:
             # --- Account Filtering ---
             all_accounts = sorted(df['Account'].unique())
             selected_accounts = st.multiselect("Filter by Account(s)", options=all_accounts, default=all_accounts)
-
-        with col3:
+            
             # --- Category Filtering ---
             all_categories = sorted(df['Category'].unique())
             selected_categories = st.multiselect("Filter by Category(s)", options=all_categories, default=all_categories)
+
+        with col3:
+            # --- Subcategory Filtering (Dynamic) ---
+            if not selected_categories:
+                available_subcategories = sorted(df['Subcategory'].unique())
+            else:
+                available_subcategories = sorted(df[df['Category'].isin(selected_categories)]['Subcategory'].unique())
+            
+            selected_subcategories = st.multiselect("Filter by Subcategory(s)", options=available_subcategories, default=available_subcategories)
 
 
     # Apply all filters
     date_mask = (df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date)
     account_mask = df['Account'].isin(selected_accounts)
     category_mask = df['Category'].isin(selected_categories)
+    subcategory_mask = df['Subcategory'].isin(selected_subcategories) # New mask
 
-    filtered_df = df[date_mask & account_mask & category_mask]
+    filtered_df = df[date_mask & account_mask & category_mask & subcategory_mask] # Updated filter application
 
 
     if filtered_df.empty:
         st.info("No transactions found for the selected filters. Try adjusting your selections!", icon="🧐")
         return
-        
-    # --- Data Segmentation (Income, Expense, Stash) ---
-    stash_categories = list(st.session_state.get('stash_goals', {}).keys())
+
+    # --- Stash Calculation Update ---
+    # Get stash subcategories from session state
+    stash_subcategories = st.session_state.get('stash_goals', {}).keys()
     
-    # A stash transaction is either Type 'Stash' OR (Type 'Expense' AND Category is in stash_categories)
+    # New Stash Mask:
+    # A transaction is a "Stash" if:
+    # 1. Its Type is explicitly 'Stash'
+    # 2. Its Type is 'Expense' AND its Subcategory is in the defined stash list
     stash_mask = (filtered_df['Type'] == 'Stash') | \
-                   ((filtered_df['Type'] == 'Expense') & (filtered_df['Category'].isin(stash_categories)))
+                 ((filtered_df['Type'] == 'Expense') & (filtered_df['Subcategory'].isin(stash_subcategories)))
     
-    # Separate dataframes for easier calculations
-    # Stashes are *removed* from expenses
-    expense_df = filtered_df[(filtered_df['Type'] == 'Expense') & (~stash_mask)]
-    income_df = filtered_df[filtered_df['Type'] == 'Income']
-    stash_df = filtered_df[stash_mask]
+    # New Expense Mask:
+    # An "Expense" is:
+    # 1. Its Type is 'Expense'
+    # 2. AND it is NOT a stash (as defined above)
+    expense_mask = (filtered_df['Type'] == 'Expense') & (~stash_mask)
+    
+    income_mask = filtered_df['Type'] == 'Income'
 
     # --- High-Level KPIs ---
     st.markdown("---")
     st.header("📈 Key Metrics")
     st.markdown("Here's the big picture! 🖼️ These are your headline numbers for the selected period.")
 
-    total_income = income_df['Amount'].sum()
-    total_expenses = expense_df['Amount'].sum()
-    total_stashed = stash_df['Amount'].sum()
-    total_savings = total_income - total_expenses - total_stashed
+    total_income = filtered_df[income_mask]['Amount'].sum()
+    total_expenses = filtered_df[expense_mask]['Amount'].sum() # Use new expense mask
+    total_stashed = filtered_df[stash_mask]['Amount'].sum() # Use new stash mask
+    # --- CALCULATION UPDATED AS REQUESTED ---
+    # This now represents Total Savings = (Income - NonStash_Expenses) + Stash_Contributions
+    net_savings = total_income + total_stashed - total_expenses 
 
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    kpi1.metric("💰 Total Income", f"{currency_symbol}{total_income:,.2f}",border=True)
-    kpi2.metric("💸 Total Expenses", f"{currency_symbol}{total_expenses:,.2f}",border=True)
-    kpi3.metric("🏦 Total Stashed", f"{currency_symbol}{total_stashed:,.2f}",border=True)
-    kpi4.metric(
-        "📊 Net Savings" if total_savings >= 0 else "📉 Net Deficit",
-        f"{currency_symbol}{total_savings:,.2f}",
-        delta=f"{total_savings:,.2f}", # Added delta argument
-        delta_color=("inverse" if total_savings < 0 else "normal"), border=True
-    )
+    with kpi1:
+        with st.container(border=True):
+            st.metric("💰 Total Income", f"{currency_symbol}{total_income:,.2f}")
+    with kpi2:
+        with st.container(border=True):
+            st.metric("💸 Total Expenses", f"{currency_symbol}{total_expenses:,.2f}")
+    with kpi3:
+        with st.container(border=True):
+            st.metric("🏦 Total Stashed", f"{currency_symbol}{total_stashed:,.2f}")
+    with kpi4:
+        with st.container(border=True):
+            st.metric(
+                "Total Savings", # Renamed label to reflect new calculation
+                f"{currency_symbol}{net_savings:,.2f}",
+                delta=f"{net_savings:,.2f}",
+                delta_color=("inverse" if net_savings < 0 else "normal")
+            )
 
     # --- Time Series Analysis ---
     st.header("📊 Cumulative Financials Over Time")
     st.markdown("How are you trending? 📉 This chart shows your financial journey over time, tracking how your savings grow (or shrink!).")
     
-    # Resample data for a clean cumulative chart
-    income_daily = income_df.set_index('Date').resample('D')['Amount'].sum().reset_index().rename(columns={'Amount': 'Income'})
-    expense_daily = expense_df.set_index('Date').resample('D')['Amount'].sum().reset_index().rename(columns={'Amount': 'Expense'})
-    stash_daily = stash_df.set_index('Date').resample('D')['Amount'].sum().reset_index().rename(columns={'Amount': 'Stash'})
+    # Make a copy to avoid changing the original filtered_df and sort by date
+    time_series_df = filtered_df.copy().sort_values('Date')
+    
+    # Get stash subcategories again for this dataframe
+    stash_subcategories_ts = st.session_state.get('stash_goals', {}).keys()
+    
+    # Create separate income, expense, and stash columns for cumulative calculation
+    def get_type(row):
+        if row['Type'] == 'Income':
+            return 'Income'
+        if row['Type'] == 'Stash' or (row['Type'] == 'Expense' and row['Subcategory'] in stash_subcategories_ts):
+            return 'Stash'
+        if row['Type'] == 'Expense':
+            return 'Expense'
+        return 'Other'
 
-    # Merge all daily data
-    merged_df = pd.merge(income_daily, expense_daily, on='Date', how='outer')
-    merged_df = pd.merge(merged_df, stash_daily, on='Date', how='outer').fillna(0).sort_values('Date')
+    time_series_df['Tx_Type'] = time_series_df.apply(get_type, axis=1)
+    
+    time_series_df['Income'] = time_series_df.apply(lambda row: row['Amount'] if row['Tx_Type'] == 'Income' else 0, axis=1)
+    time_series_df['Expense'] = time_series_df.apply(lambda row: row['Amount'] if row['Tx_Type'] == 'Expense' else 0, axis=1)
+    time_series_df['Stash'] = time_series_df.apply(lambda row: row['Amount'] if row['Tx_Type'] == 'Stash' else 0, axis=1) # New
 
     # Calculate cumulative sums
-    merged_df['Cumulative Income'] = merged_df['Income'].cumsum()
-    merged_df['Cumulative Expense'] = merged_df['Expense'].cumsum()
-    merged_df['Cumulative Stash'] = merged_df['Stash'].cumsum()
-    merged_df['Cumulative Net Savings'] = merged_df['Cumulative Income'] - merged_df['Cumulative Expense'] - merged_df['Cumulative Stash']
+    time_series_df['Cumulative Income'] = time_series_df['Income'].cumsum()
+    time_series_df['Cumulative Expense'] = time_series_df['Expense'].cumsum()
+    time_series_df['Cumulative Stash'] = time_series_df['Stash'].cumsum() # New
+    # --- CALCULATION UPDATED AS REQUESTED ---
+    time_series_df['Cumulative Total Savings'] = time_series_df['Cumulative Income'] + time_series_df['Cumulative Stash'] - time_series_df['Cumulative Expense']
 
     # Create the Plotly figure for the time series
     fig_time_series = go.Figure()
 
     # Add traces for Income, Expense, Stash, and Net Savings
     fig_time_series.add_trace(go.Scatter(
-        x=merged_df['Date'], y=merged_df['Cumulative Income'],
+        x=time_series_df['Date'], y=time_series_df['Cumulative Income'],
         mode='lines', name='Cumulative Income', line=dict(color='green'),
         fill='tozeroy',
         fillcolor='rgba(0,128,0,0.2)' # Green with transparency
     ))
     fig_time_series.add_trace(go.Scatter(
-        x=merged_df['Date'], y=merged_df['Cumulative Expense'],
+        x=time_series_df['Date'], y=time_series_df['Cumulative Expense'],
         mode='lines', name='Cumulative Expense', line=dict(color='red'),
         fill='tozeroy',
         fillcolor='rgba(255,0,0,0.2)' # Red with transparency
     ))
     fig_time_series.add_trace(go.Scatter(
-        x=merged_df['Date'], y=merged_df['Cumulative Stash'],
-        mode='lines', name='Cumulative Stash', line=dict(color='blue'),
+        x=time_series_df['Date'], y=time_series_df['Cumulative Stash'], # New
+        mode='lines', name='Cumulative Stash', line=dict(color='orange'),
         fill='tozeroy',
-        fillcolor='rgba(0,0,255,0.2)' # Blue with transparency
+        fillcolor='rgba(255,165,0,0.2)' # Orange with transparency
     ))
     fig_time_series.add_trace(go.Scatter(
-        x=merged_df['Date'], y=merged_df['Cumulative Net Savings'],
-        mode='lines', name='Net Savings', line=dict(color='gold', dash='dash', width=3)
+        x=time_series_df['Date'], y=time_series_df['Cumulative Total Savings'], # Updated variable
+        mode='lines', name='Total Savings', line=dict(color='blue', dash='dash') # Updated label
     ))
 
     fig_time_series.update_layout(
@@ -196,15 +195,15 @@ def overview_page():
         legend_title='Metric',
         height=450
     )
-    st.plotly_chart(fig_time_series, use_container_width=True)
+    st.plotly_chart(fig_time_series, use_container_width=True) # Use container width
 
 
     # --- Visualizations ---
     st.markdown("---")
     st.header("🎨 Visual Analysis")
-    st.markdown("Let's get visual! 🧐 These charts help you compare your totals and see exactly where your money is going.")
+    st.markdown("Let's get visual! 🧐 These charts help you compare your income to your expenses and see exactly where your money is going.")
 
-    # Bar Chart - Full Width
+    # Bar chart for Income vs Expense vs Stash
     fig_bar = go.Figure()
     fig_bar.add_trace(go.Bar(
         x=['Income'], y=[total_income], name='Income', marker_color='green'
@@ -213,7 +212,7 @@ def overview_page():
         x=['Expenses'], y=[total_expenses], name='Expenses', marker_color='red'
     ))
     fig_bar.add_trace(go.Bar(
-        x=['Stashes'], y=[total_stashed], name='Stashes', marker_color='blue'
+        x=['Stashes'], y=[total_stashed], name='Stashes', marker_color='orange' # New
     ))
     fig_bar.update_layout(
         title_text='Income vs. Expenses vs. Stashes',
@@ -221,96 +220,112 @@ def overview_page():
         barmode='group',
         height=400
     )
-    st.plotly_chart(fig_bar, use_container_width=True)
+    st.plotly_chart(fig_bar, use_container_width=True) # Use container width
+
+    # --- Reverted to Pie Charts, Grouped by Subcategory ---
+    st.markdown("### 📊 Breakdown by Subcategory")
     
-    st.markdown("### Category Breakdowns")
-    st.markdown("A proportional look at where your money came from, where it went, and where you've saved it.")
-
-    # --- Pie Charts with Proportional Sizing ---
-    # Create column spec, handling potential division by zero
+    # Calculate column widths
     total_all = total_income + total_expenses + total_stashed
-    if total_all == 0:
-        # If all are zero, just use equal columns
-        col_spec = [1, 1, 1]
+    if total_all == 0: # Avoid division by zero
+        income_col_width = 1
+        expense_col_width = 1
+        stash_col_width = 1
     else:
-        # Set a minimum width (e.g., 0.1) to ensure visibility even for small amounts
-        col_spec = [
-            max(0.1, total_income / total_all),
-            max(0.1, total_expenses / total_all),
-            max(0.1, total_stashed / total_all)
-        ]
+        income_col_width = max(1, int(total_income / total_all * 10))
+        expense_col_width = max(1, int(total_expenses / total_all * 10))
+        stash_col_width = max(1, int(total_stashed / total_all * 10))
 
-    pie1, pie2, pie3 = st.columns(3)#col_spec
+    vis1, vis2, vis3 = st.columns(3)#(income_col_width, expense_col_width, stash_col_width)
 
-    with pie1:
-        if total_income > 0:
-            income_category_spend = income_df.groupby('Category')['Amount'].sum().sort_values(ascending=False)
-            fig_income_donut = go.Figure(data=[go.Pie(
-                labels=income_category_spend.index,
-                values=income_category_spend.values,
-                hole=.4,
-                pull=[0.05] * len(income_category_spend.index),
-                marker_colors=px.colors.sequential.Greens_r,
-                textinfo='label+percent',
-                hovertemplate='<b>%{label}</b><br>Amount: %{value:,.2f}<br>Percent: %{percent}'
-            )])
-            fig_income_donut.update_layout(title_text='Income Breakdown', height=400, showlegend=False)
-            st.plotly_chart(fig_income_donut, use_container_width=True)
+    with vis1:
+        st.subheader("💰 Income Sources")
+        income_df = filtered_df[income_mask].copy()
+        if income_df.empty:
+            st.info("No income data to display.")
         else:
-            st.info("No Income to display.")
-
-    with pie2:
-        if total_expenses > 0:
-            expense_category_spend = expense_df.groupby('Category')['Amount'].sum().sort_values(ascending=False)
-            fig_expense_donut = go.Figure(data=[go.Pie(
-                labels=expense_category_spend.index,
-                values=expense_category_spend.values,
+            # Group by Subcategory
+            subcategory_income = income_df.groupby('Subcategory')['Amount'].sum().sort_values(ascending=False)
+            fig_pie_income = go.Figure(data=[go.Pie(
+                labels=subcategory_income.index,
+                values=subcategory_income.values,
                 hole=.4,
-                pull=[0.05] * len(expense_category_spend.index),
-                marker_colors=px.colors.sequential.Reds_r,
-                textinfo='label+percent',
-                hovertemplate='<b>%{label}</b><br>Amount: %{value:,.2f}<br>Percent: %{percent}'
+                pull=[0.05] * len(subcategory_income.index),
+                textinfo="label+percent" # Add labels
             )])
-            fig_expense_donut.update_layout(title_text='Expense Breakdown', height=400, showlegend=False)
-            st.plotly_chart(fig_expense_donut, use_container_width=True)
-        else:
-            st.info("No Expenses to display.")
+            fig_pie_income.update_layout(
+                title_text='Income Breakdown by Subcategory',
+                height=400,
+                margin=dict(t=50, l=0, r=0, b=0)
+            )
+            st.plotly_chart(fig_pie_income, use_container_width=True)
 
-    with pie3:
-        if total_stashed > 0:
-            stash_category_spend = stash_df.groupby('Category')['Amount'].sum().sort_values(ascending=False)
-            fig_stash_donut = go.Figure(data=[go.Pie(
-                labels=stash_category_spend.index,
-                values=stash_category_spend.values,
-                hole=.4,
-                pull=[0.05] * len(stash_category_spend.index),
-                marker_colors=px.colors.sequential.Blues_r,
-                textinfo='label+percent',
-                hovertemplate='<b>%{label}</b><br>Amount: %{value:,.2f}<br>Percent: %{percent}'
-            )])
-            fig_stash_donut.update_layout(title_text='Stash Breakdown', height=400, showlegend=False)
-            st.plotly_chart(fig_stash_donut, use_container_width=True)
+
+    with vis2:
+        st.subheader("💸 Expense Breakdown")
+        expense_df = filtered_df[expense_mask].copy()
+        if expense_df.empty:
+            st.info("No expense data to display.")
         else:
-            st.info("No Stash contributions to display.")
+            # Group by Subcategory
+            subcategory_expense = expense_df.groupby('Subcategory')['Amount'].sum().sort_values(ascending=False)
+            fig_pie_expense = go.Figure(data=[go.Pie(
+                labels=subcategory_expense.index,
+                values=subcategory_expense.values,
+                hole=.4,
+                pull=[0.05] * len(subcategory_expense.index),
+                textinfo="label+percent" # Add labels
+            )])
+            fig_pie_expense.update_layout(
+                title_text='Expense Breakdown by Subcategory',
+                height=400,
+                margin=dict(t=50, l=0, r=0, b=0)
+            )
+            st.plotly_chart(fig_pie_expense, use_container_width=True)
+
+    with vis3:
+        st.subheader("🏦 Stash Breakdown")
+        stash_df = filtered_df[stash_mask].copy()
+        if stash_df.empty:
+            st.info("No stash data to display.")
+        else:
+            # Group by Subcategory
+            subcategory_stash = stash_df.groupby('Subcategory')['Amount'].sum().sort_values(ascending=False)
+            fig_pie_stash = go.Figure(data=[go.Pie(
+                labels=subcategory_stash.index,
+                values=subcategory_stash.values,
+                hole=.4,
+                pull=[0.05] * len(subcategory_stash.index),
+                textinfo="label+percent" # Add labels
+            )])
+            fig_pie_stash.update_layout(
+                title_text='Stash Breakdown by Subcategory',
+                height=400,
+                margin=dict(t=50, l=0, r=0, b=0)
+            )
+            st.plotly_chart(fig_pie_stash, use_container_width=True)
 
     # --- Detailed Transactions ---
     st.markdown("---")
     st.header("🧾 Transaction Details")
     st.markdown("Want to see the fine print? 📝 Here are all the individual transactions for the period, split by type.")
 
-    trans1, trans2, trans3 = st.columns(3)
+    trans1, trans2, trans3 = st.columns(3) # Updated to 3 columns
 
     with trans1:
-        with st.expander(f"💰 Incomes ({len(income_df)})"):
-            st.dataframe(income_df.sort_values('Date', ascending=False), hide_index=True, use_container_width=True)
+        with st.expander("💸 Expenses in Period"):
+            expense_details = filtered_df[expense_mask].sort_values('Date', ascending=False)
+            st.dataframe(expense_details, use_container_width=True, hide_index=True)
 
     with trans2:
-        with st.expander(f"💸 Expenses ({len(expense_df)})"):
-            st.dataframe(expense_df.sort_values('Date', ascending=False), hide_index=True, use_container_width=True)
-
+        with st.expander("💰 Incomes in Period"):
+            income_details = filtered_df[income_mask].sort_values('Date', ascending=False)
+            st.dataframe(income_details, use_container_width=True, hide_index=True)
+            
     with trans3:
-        with st.expander(f"🏦 Stash Contributions ({len(stash_df)})"):
-            st.dataframe(stash_df.sort_values('Date', ascending=False), hide_index=True, use_container_width=True)
+        with st.expander("🏦 Stashes in Period"):
+            stash_details = filtered_df[stash_mask].sort_values('Date', ascending=False)
+            st.dataframe(stash_details, use_container_width=True, hide_index=True)
 
 
 if __name__ == "__main__":

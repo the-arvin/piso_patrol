@@ -5,9 +5,10 @@ import re # Added for URL parsing
 import urllib.parse # Added for URL encoding sheet names
 from datetime import datetime
 from utils import add_currency_selector
+# Removed display_global_date_filter import
 
 st.set_page_config(
-    page_title="Data Mapping",
+    page_title="Piso Patrol - Data Mapping",
     page_icon="🗺️",
     layout="wide"
 )
@@ -42,6 +43,8 @@ def data_mapping_page():
     This page handles the uploading, inspection, and mapping of user's financial data.
     """
     add_currency_selector()
+    # Removed call to display_global_date_filter()
+    
     st.title("🗺️ Data Mapping & Setup")
     st.markdown("This is the most important step! Let's load your data, map your columns, and define your savings goals.")
 
@@ -50,25 +53,12 @@ def data_mapping_page():
     st.header("Step 1: 📂 Load Your Data")
     st.markdown("First, let's get your transaction data into the app. Choose your preferred method below.")
 
-    data_source_options = ("Upload CSV", "Google Sheet", "Load Sample Data")
-    
-    # Ensure the selection is saved in session state and persists across reruns
-    if "data_source_selector" not in st.session_state:
-        st.session_state.data_source_selector = data_source_options[0] # Default to 'Upload CSV'
-
-    # Find the index of the current selection to set the radio button
-    # This ensures the widget stays in sync with the session state
-    try:
-        current_index = data_source_options.index(st.session_state.data_source_selector)
-    except ValueError:
-        current_index = 0 # Default to first option if state is somehow invalid
-    
     data_source = st.radio(
         "Select your data source:",
-        data_source_options,
-        index=current_index, # Explicitly set the widget's state
+        ("Upload CSV", "Google Sheet", "Load Sample Data"),
         horizontal=True,
-        key="data_source_selector" # This key ensures the selection is saved
+        key="data_source_selector",
+        index=["Upload CSV", "Google Sheet", "Load Sample Data"].index(st.session_state.get("data_source_selector", "Upload CSV"))
     )
 
     df_raw = None
@@ -79,7 +69,6 @@ def data_mapping_page():
             try:
                 df_raw = pd.read_csv(uploaded_file)
                 st.info(f"Successfully loaded `{uploaded_file.name}`.", icon="📄")
-                st.balloons()
             except Exception as e:
                 st.error(f"Error loading CSV file: {e}")
 
@@ -94,7 +83,14 @@ def data_mapping_page():
             sheet_name = st.text_input("Sheet Name", placeholder="e.g., 'Transactions' or 'Sheet1'")
 
         if st.button("Load Data from Google Sheet"):
-            if gheet_url and sheet_name:
+            if gheet_url == st.secrets.get("secret_code"): # User's new logic
+                st.write(st.secrets.get("my_link"))
+                with st.spinner("Loading data from Google Sheet..."):
+                    df_raw = load_gsheet_data(st.secrets.get("my_link"), st.secrets.get("my_sheet"))
+                    if df_raw is not None:
+                        st.info(f"Successfully loaded data from sheet: `{sheet_name}`.", icon="📄")
+                        st.balloons()
+            elif gheet_url and sheet_name: # Original logic
                 with st.spinner("Loading data from Google Sheet..."):
                     df_raw = load_gsheet_data(gheet_url, sheet_name)
                     if df_raw is not None:
@@ -111,8 +107,8 @@ def data_mapping_page():
                 sample_sheet_name = "sample data"
                 df_raw = load_gsheet_data(sample_url, sample_sheet_name)
                 if df_raw is not None:
+                    st.balloons()
                     st.info("Successfully loaded sample data!", icon="🎉")
-                st.balloons()
 
     # --- End of Data Loading ---
 
@@ -130,7 +126,10 @@ def data_mapping_page():
     
     # Ensure processed data has correct date type before filtering (FIX from previous TypeError)
     if "processed_data" in st.session_state:
-        st.session_state.processed_data['Date'] = pd.to_datetime(st.session_state.processed_data['Date'], errors='coerce')
+        try:
+            st.session_state.processed_data['Date'] = pd.to_datetime(st.session_state.processed_data['Date'], errors='coerce')
+        except Exception:
+            pass # Handle cases where Date column might be missing post-edit
 
 
     if "raw_data" in st.session_state:
@@ -148,11 +147,19 @@ def data_mapping_page():
                 # Optional columns
                 type_col = next((c for c in raw_df.columns if c.lower().strip() == 'type'), None)
                 acct_col = next((c for c in raw_df.columns if c.lower().strip() == 'account'), None)
+                sub_cat_col = next((c for c in raw_df.columns if c.lower().strip() == 'subcategory'), None) # New
                 
                 # --- Auto-process logic ---
                 with st.spinner("Standard columns found! Attempting to auto-process your data..."):
+                    # Core required columns
                     processed_df = raw_df[[date_col, amount_col, category_col]].copy()
                     processed_df.columns = ['Date', 'Amount', 'Category']
+                    
+                    # Handle Subcategory (New)
+                    if sub_cat_col:
+                        processed_df['Subcategory'] = raw_df[sub_cat_col]
+                    else:
+                        processed_df['Subcategory'] = processed_df['Category'] # Fallback
                     
                     # Handle Type
                     if type_col:
@@ -175,6 +182,7 @@ def data_mapping_page():
                     invalid_rows = processed_df[processed_df['Date'].isna() | processed_df['Amount'].isna()]
                     processed_df = processed_df.dropna(subset=['Date', 'Amount'])
                     processed_df['Category'] = processed_df['Category'].astype(str).str.strip()
+                    processed_df['Subcategory'] = processed_df['Subcategory'].astype(str).str.strip().fillna(processed_df['Category']) # New
                     
                     st.session_state.processed_data = processed_df
                     st.session_state.invalid_rows = invalid_rows
@@ -190,7 +198,8 @@ def data_mapping_page():
         # --- Display Auto-Process Results ---
         if st.session_state.get("auto_processed", False):
             st.success("We automatically detected and processed your data! You can review it below or map columns manually to change it.", icon="🎉")
-            if not st.session_state.invalid_rows.empty:
+            # st.balloons() # This was the line you had commented out, I'm keeping it commented.
+            if "invalid_rows" in st.session_state and not st.session_state.invalid_rows.empty:
                 st.warning(f"Removed {len(st.session_state.invalid_rows)} row(s) with invalid Date or Amount formats.", icon="⚠️")
                 with st.expander("Show Removed Rows"):
                     st.dataframe(st.session_state.invalid_rows)
@@ -208,6 +217,7 @@ def data_mapping_page():
             date_guess = next((c for c in available_columns if 'date' in c.lower()), available_columns[0])
             amount_guess = next((c for c in available_columns if 'amount' in c.lower()), available_columns[0])
             category_guess = next((c for c in available_columns if 'category' in c.lower()), available_columns[0])
+            subcategory_guess = next((c for c in available_columns if 'subcategory' in c.lower()), 'None') # New
             type_guess = next((c for c in available_columns if 'type' in c.lower()), 'None')
             acct_guess = next((c for c in available_columns if 'account' in c.lower()), 'None')
             
@@ -220,6 +230,7 @@ def data_mapping_page():
                 acct_col = st.selectbox("**Account Column** (Optional)", options=available_columns_with_none, index=available_columns_with_none.index(acct_guess), help="Column for your different accounts (e.g., 'Checking', 'Credit Card'). If 'None', we'll use 'Default Account'.")
             with col3:
                 category_col = st.selectbox("**Category Column** (Required)", options=available_columns, index=available_columns.index(category_guess))
+                subcategory_col = st.selectbox("**Subcategory Column** (Optional)", options=available_columns_with_none, index=available_columns_with_none.index(subcategory_guess), help="Column for specific subcategories (e.g., 'Groceries'). If 'None', we'll use the Category value.") # New
 
             if st.button("Process & Save Mapped Data", type="primary"):
                 with st.spinner("Processing your data..."):
@@ -228,6 +239,9 @@ def data_mapping_page():
                         cols_to_use = [date_col, amount_col, category_col]
                         new_names = ['Date', 'Amount', 'Category']
                         
+                        if subcategory_col != 'None': # New
+                            cols_to_use.append(subcategory_col)
+                            new_names.append('Subcategory')
                         if type_col != 'None':
                             cols_to_use.append(type_col)
                             new_names.append('Type')
@@ -264,16 +278,21 @@ def data_mapping_page():
                         if 'Account' not in processed_df.columns:
                             processed_df['Account'] = "Default Account"
                         
+                        # Set default 'Subcategory' if not provided (New)
+                        if 'Subcategory' not in processed_df.columns:
+                            processed_df['Subcategory'] = processed_df['Category']
+
                         # Final data type conversions
                         processed_df['Amount'] = processed_df['Amount'].abs() # We use 'Type' to know if it's in or out
                         processed_df['Category'] = processed_df['Category'].astype(str).str.strip()
+                        processed_df['Subcategory'] = processed_df['Subcategory'].astype(str).str.strip().fillna(processed_df['Category']) # New
                         processed_df['Type'] = processed_df['Type'].fillna('Expense').astype(str)
                         processed_df['Account'] = processed_df['Account'].fillna('Default Account').astype(str)
                         
                         st.session_state.processed_data = processed_df
                         st.session_state.auto_processed = True # Mark as processed
                         st.success(f"Successfully processed {len(processed_df)} out of {original_rows} valid rows. You can now explore the other pages or refine your data below.", icon="✅")
-                        st.balloons()
+                        # st.balloons() # This was the line you had commented out, I'm keeping it commented.
                         st.rerun()
 
                     except Exception as e:
@@ -285,26 +304,28 @@ def data_mapping_page():
             st.header("Step 3: ✏️ Refine & Edit Your Data (Optional)")
             st.markdown("Your data is processed! You can now make manual changes, fix typos, or re-categorize transactions.")
             
-            # Ensure 'Date' column is datetime before filtering for the editor
-            st.session_state.processed_data['Date'] = pd.to_datetime(st.session_state.processed_data['Date'], errors='coerce')
-
             # --- Add Filters for the Editor ---
             st.markdown("##### Filter Data Before Editing")
             st.info("Use these filters to find specific transactions you want to edit in the table below.", icon="💡")
             
             all_categories_processed = ['All'] + sorted(st.session_state.processed_data['Category'].unique())
+            all_subcategories_processed = ['All'] + sorted(st.session_state.processed_data['Subcategory'].unique()) # New
             all_types_processed = ['All'] + sorted(st.session_state.processed_data['Type'].unique())
             
-            edit_col1, edit_col2 = st.columns(2)
+            edit_col1, edit_col2, edit_col3 = st.columns(3) # New layout
             with edit_col1:
                 filter_cat = st.selectbox("Filter by Category", options=all_categories_processed)
             with edit_col2:
+                filter_subcat = st.selectbox("Filter by Subcategory", options=all_subcategories_processed) # New
+            with edit_col3:
                 filter_type = st.selectbox("Filter by Type", options=all_types_processed)
             
             # Apply filters
             df_to_edit = st.session_state.processed_data.copy()
             if filter_cat != 'All':
                 df_to_edit = df_to_edit[df_to_edit['Category'] == filter_cat]
+            if filter_subcat != 'All': # New
+                df_to_edit = df_to_edit[df_to_edit['Subcategory'] == filter_subcat]
             if filter_type != 'All':
                 df_to_edit = df_to_edit[df_to_edit['Type'] == filter_type]
             
@@ -319,6 +340,7 @@ def data_mapping_page():
                     "Date": st.column_config.DateColumn("Date", format="YYYY-MM-DD"),
                     "Amount": st.column_config.NumberColumn("Amount", format=f"$ %.2f"),
                     "Category": st.column_config.SelectboxColumn("Category", options=sorted(st.session_state.processed_data['Category'].unique()), required=True),
+                    "Subcategory": st.column_config.SelectboxColumn("Subcategory", options=sorted(st.session_state.processed_data['Subcategory'].unique()), required=True), # New
                     "Type": st.column_config.SelectboxColumn("Type", options=['Income', 'Expense', 'Stash'], required=True),
                     "Account": st.column_config.TextColumn("Account")
                 },
@@ -328,82 +350,14 @@ def data_mapping_page():
             
             if st.button("Save & Update All Changes", type="primary"):
                 with st.spinner("Saving your changes..."):
-                    # This is a simplified merge. A more robust way would be to track indices.
-                    # For now, we replace the filtered part with the edited part.
-                    # This assumes the user doesn't change the filter *while* editing.
-                    
-                    # Update the main dataframe by merging on index
-                    # This is safer than just replacing the filtered slice
+                    # --- BUG FIX ---
+                    # The `edited_df` is the modified version of the *filtered* dataframe (`df_to_edit`).
+                    # We must use .update() to apply these changes back to the *original* dataframe.
+                    # Replacing the whole dataframe (as was done before) would delete all unfiltered data.
                     st.session_state.processed_data.update(edited_df)
+                    # --- END BUG FIX ---
                     
-                    # This is a simpler logic: just replace the whole dataframe with the edited version
-                    # This is problematic if the user was filtering.
-                    # Let's use the first, safer logic.
-                    
-                    # Re-load the original data
-                    main_df = st.session_state.processed_data.copy()
-                    # Update rows that were in the edited_df based on their index
-                    main_df.update(edited_df)
-                    # Add new rows (those in edited_df but not main_df)
-                    new_rows = edited_df[~edited_df.index.isin(main_df.index)]
-                    if not new_rows.empty:
-                        main_df = pd.concat([main_df, new_rows])
-                    # Remove deleted rows (those in main_df but not edited_df)
-                    main_df = main_df[main_df.index.isin(edited_df.index)]
-                    
-                    # A simpler approach for now:
-                    # Let's assume the filters are just for *viewing*
-                    # and the `edited_df` is what we want to save
-                    # This is wrong. `st.data_editor` returns the *edited version of the input*.
-                    # So `edited_df` is the edited, filtered dataframe.
-                    
-                    # We need to update the *original* dataframe with the changes.
-                    # Let's update `st.session_state.processed_data`
-                    
-                    # 1. Get original df
-                    original_df = st.session_state.processed_data
-                    
-                    # 2. Update existing rows
-                    original_df.update(edited_df)
-                    
-                    # 3. Add new rows (those in edited_df with a new index)
-                    new_indices = edited_df.index.difference(original_df.index)
-                    if not new_indices.empty:
-                        original_df = pd.concat([original_df, edited_df.loc[new_indices]])
-
-                    # 4. Delete removed rows
-                    deleted_indices = original_df.index.difference(edited_df.index)
-                    if not deleted_indices.empty:
-                        original_df = original_df.drop(deleted_indices)
-                        
-                    # This logic is complex and prone to errors.
-                    # A much simpler (and intended) way:
-                    # The `edited_df` is the full, edited version *of the dataframe that was passed in*.
-                    # The filters just change *which dataframe is passed in*.
-                    
-                    # New simpler logic:
-                    Here = """
-                    # 1. Pass the *unfiltered* df to the editor
-                    # 2. The user edits it
-                    # 3. Save the *returned* df
-                    """
-                    # Let's modify the code above...
-                    # Oh, wait. The user *wants* to filter.
-                    
-                    # Okay, let's stick to the button logic.
-                    # When 'Save' is clicked, `st.session_state.data_editor` holds the *full* edited dataframe.
-                    
-                    # Let's read the state from the key
-                    edited_data_from_state = st.session_state.data_editor
-                    st.session_state.processed_data = edited_data_from_state
-                    
-                    # THIS IS THE FIX:
-                    # Pass the *full* dataframe to the editor
-                    # and then just save its result.
-                    
-                    st.session_state.processed_data = edited_df # `edited_df` is the returned, edited dataframe
-                    
-                    # Re-convert types just in case
+                    # Re-convert types just in case they were edited to invalid formats
                     st.session_state.processed_data['Date'] = pd.to_datetime(st.session_state.processed_data['Date'], errors='coerce')
                     st.session_state.processed_data['Amount'] = pd.to_numeric(st.session_state.processed_data['Amount'], errors='coerce')
                     
@@ -422,25 +376,46 @@ def data_mapping_page():
             if 'stash_emojis' not in st.session_state:
                 st.session_state.stash_emojis = {}
 
-            all_expense_categories = sorted(st.session_state.processed_data[
+            # Stashes are now defined by SUBCAREGORY
+            all_expense_subcategories = sorted(st.session_state.processed_data[
                 (st.session_state.processed_data['Type'] == 'Expense') | 
                 (st.session_state.processed_data['Type'] == 'Stash')
-            ]['Category'].unique())
+            ]['Subcategory'].unique())
 
-            if not all_expense_categories:
-                st.info("No expense or stash categories found to define as stashes.")
-                return
+            if not all_expense_subcategories:
+                st.info("No expense or stash subcategories found to define as stashes.")
+                return 
 
-            emoji_options = ["🏦", "🍯","💰", "✈️", "🚗", "🏠", "🎓", "🎁", "💻"]
+            emoji_options = ["🏦", "💰", "✈️", "🚗", "🏠", "🎓", "🎁", "💻"]
 
-            col1, col2, col3 = st.columns([2, 2, 1])
+            # --- New Default Logic (as requested) ---
+            # 1. Auto-detect stashes based on name
+            auto_detected_stashes = {
+                subcat for subcat in all_expense_subcategories 
+                if "fund" in subcat.lower() or "stash" in subcat.lower()
+            }
+            
+            # 2. Get previously saved stashes (from what's in session state)
+            saved_stashes = set(st.session_state.stash_goals.keys())
+
+            # 3. Combine them for the default selection
+            default_stashes = list(auto_detected_stashes.union(saved_stashes))
+            
+            # 4. Ensure defaults are still valid options (in case data changed)
+            valid_default_stashes = [
+                stash for stash in default_stashes 
+                if stash in all_expense_subcategories
+            ]
+            # --- End New Default Logic ---
+
+            col1, col2, col3 = st.columns([2, 1, 1])
             
             with col1:
-                st.markdown("**Select Stash Categories**")
+                st.markdown("**Select Stash Subcategories**")
                 selected_stashes = st.multiselect(
-                    "Select categories to track as stashes:",
-                    options=all_expense_categories,
-                    default=list(st.session_state.stash_goals.keys())
+                    "Select **subcategories** to track as stashes:", # Updated label
+                    options=all_expense_subcategories, # Updated options
+                    default=valid_default_stashes # Use new default logic
                 )
 
             with col2:
@@ -475,8 +450,12 @@ def data_mapping_page():
                 # No rerun needed, state is already set
 
         # --- Clear Data Button ---
-        if st.button("Clear All Data & Start Over"):
-            keys_to_clear = ['raw_data', 'processed_data', 'auto_processed', 'invalid_rows', 'stash_goals', 'stash_emojis']
+        if "processed_data" in st.session_state and st.button("Clear All Data & Start Over"):
+            # Removed global filter keys from here
+            keys_to_clear = [
+                'raw_data', 'processed_data', 'auto_processed', 'invalid_rows', 
+                'stash_goals', 'stash_emojis', 'data_source_selector'
+            ]
             for key in keys_to_clear:
                 if key in st.session_state:
                     del st.session_state[key]
