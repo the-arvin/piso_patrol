@@ -88,7 +88,7 @@ def data_mapping_page():
                 with st.spinner("Loading data from Google Sheet..."):
                     df_raw = load_gsheet_data(st.secrets.get("my_link"), st.secrets.get("my_sheet"))
                     if df_raw is not None:
-                        st.info(f"Successfully loaded data from sheet: `{sheet_name}`.", icon="📄")
+                        st.info(f"Successfully loaded data from your sheet.", icon="📄")
                         st.balloons()
             elif gheet_url and sheet_name: # Original logic
                 with st.spinner("Loading data from Google Sheet..."):
