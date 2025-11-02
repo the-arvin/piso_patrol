@@ -2,15 +2,64 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
-from datetime import datetime, timedelta
-from utils import add_currency_selector
-import calendar # Needed for month calculations
+from datetime import datetime
+from utils import add_currency_selector, display_global_date_filter
+import calendar
+import numpy as np
 
 st.set_page_config(
-    page_title="Income Analysis",
+    page_title="Piso Patrol - Income",
     page_icon="💰",
     layout="wide"
 )
+
+def format_currency(amount, currency_symbol):
+    """Formats a number as currency."""
+    return f"{currency_symbol}{amount:,.2f}"
+
+def calculate_ytd_comparison(df, group_col, item_name, selected_month_start):
+    """
+    Calculates the YTD comparison for a specific category/subcategory
+    against the first month of the year.
+    """
+    first_month_of_year = selected_month_start.replace(month=1)
+    
+    # --- FIX: Convert the datetime.date object to a Period object for comparison ---
+    first_month_period = pd.Period(first_month_of_year, freq='M')
+    
+    # Get data for the first month of the year
+    first_month_df = df[
+        (df['Date'].dt.to_period('M') == first_month_period) &
+        (df[group_col] == item_name)
+    ]
+    
+    first_month_spend = first_month_df['Amount'].sum()
+    return first_month_spend
+
+# --- NEW FUNCTION ---
+def calculate_ytd_average_income(df, group_col, item_name, selected_month_start):
+    """
+    Calculates the YTD monthly average for a specific category/subcategory,
+    excluding the selected month, only for months with income.
+    """
+    # Filter for YTD, *excluding* the selected month
+    ytd_df = df[
+        (df['Date'].dt.date < selected_month_start) &
+        (df['Date'].dt.date >= selected_month_start.replace(month=1, day=1)) &
+        (df[group_col] == item_name)
+    ]
+    
+    if ytd_df.empty:
+        return 0.0
+
+    # Find number of unique months with income for this item
+    months_with_income = ytd_df['Date'].dt.to_period('M').nunique()
+    if months_with_income == 0:
+        return 0.0
+        
+    ytd_total = ytd_df['Amount'].sum()
+    return ytd_total / months_with_income
+# --- END NEW FUNCTION ---
 
 def income_page():
     """
@@ -18,295 +67,332 @@ def income_page():
     """
     add_currency_selector()
     currency_symbol = st.session_state.get("currency_symbol", "$")
-
+    
     st.title("💰 Income Analysis")
-    st.markdown("Let's review your earnings. This page helps you track your income sources and see how they trend over time.")
+    st.markdown("Track your earnings, understand your income streams, and see how they change over time.")
 
     if "processed_data" not in st.session_state or st.session_state.processed_data.empty:
         st.warning("We don't have any data to analyze yet! 📂 Please head over to the 'Data Mapping' page to upload and process your financial data first.", icon="⚠️")
-        st.page_link("pages/2_Data_Mapping.py", label="Go to Data Mapping", icon="🗺️")
+        st.page_link("pages/1_📑_Data_Mapping.py", label="Go to Data Mapping", icon="🗺️")
         return
 
-    df = st.session_state.processed_data
-    # Ensure Date column is datetime
+    df = st.session_state.processed_data.copy()
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
 
-    # --- Data Filtering ---
-    st.header("🗓️ Select Your Filters")
-    st.markdown("Filter your income by date or account to focus your analysis.")
+    # --- Global Date Filter ---
+    display_global_date_filter()
+    if st.session_state.get("global_start_date") is None:
+        st.info("Please select a date range from the sidebar to begin.", icon="🗓️")
+        return
+        
+    start_date = st.session_state.global_start_date
+    end_date = st.session_state.global_end_date
     
+    # Filter by global date first
+    date_mask = (df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date)
+    df = df[date_mask]
+
+    # --- Income Logic ---
+    income_mask = df['Type'] == 'Income'
+    df_income = df[income_mask].copy()
+
+    # --- Data Filtering (Account, Category, Subcategory) ---
+    st.header("🗓️ Select Your Filters")
+    st.markdown("Refine your analysis by filtering for specific accounts, categories, or subcategories.")
+
     with st.expander("Filters available here:", expanded=False):
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            # --- Date Filtering ---
-            today = datetime.now().date()
-            min_date = df['Date'].min().date()
-            max_date = df['Date'].max().date()
-
-            date_options = [
-                "All Time", "This Week", "This Month", "Last 30 Days", "This Quarter",
-                "Year to Date", "Custom"
-            ]
-            
-            selected_option = st.selectbox("Choose a date range", date_options, index=0)
-
-            if selected_option == "This Week":
-                start_date = today - timedelta(days=today.weekday())
-                end_date = today
-            elif selected_option == "This Month":
-                start_date = today.replace(day=1)
-                end_date = today
-            elif selected_option == "Last 30 Days":
-                start_date = today - timedelta(days=30)
-                end_date = today
-            elif selected_option == "This Quarter":
-                quarter_start_month = (today.month - 1) // 3 * 3 + 1
-                start_date = today.replace(month=quarter_start_month, day=1)
-                end_date = today
-            elif selected_option == "Year to Date":
-                start_date = today.replace(month=1, day=1)
-                end_date = today
-            elif selected_option == "All Time":
-                start_date = min_date
-                end_date = max_date
-            else: # Custom
-                date_range = st.date_input(
-                    "Select your custom date range",
-                    (min_date, max_date),
-                    min_value=min_date,
-                    max_value=max_date
-                )
-                if len(date_range) == 2:
-                    start_date, end_date = date_range
-                else:
-                    start_date, end_date = min_date, max_date
-
-        with col2:
-            # --- Account Filtering ---
-            all_accounts = sorted(df['Account'].unique())
+            all_accounts = sorted(df_income['Account'].unique())
             selected_accounts = st.multiselect("Filter by Account(s)", options=all_accounts, default=all_accounts)
 
-        with col3:
-            # --- Category Filtering (for Income) ---
-            all_income_categories = sorted(df[df['Type'] == 'Income']['Category'].unique())
-            if not all_income_categories:
-                all_income_categories = []
-            selected_categories = st.multiselect("Filter by Category(s)", options=all_income_categories, default=all_income_categories)
+        with col2:
+            all_categories = sorted(df_income['Category'].unique())
+            selected_categories = st.multiselect("Filter by Category(s)", options=all_categories, default=all_categories)
 
+        with col3:
+            if not selected_categories:
+                available_subcategories = sorted(df_income['Subcategory'].unique())
+            else:
+                available_subcategories = sorted(df_income[df_income['Category'].isin(selected_categories)]['Subcategory'].unique())
+            
+            selected_subcategories = st.multiselect("Filter by Subcategory(s)", options=available_subcategories, default=available_subcategories)
 
     # Apply all filters
-    date_mask = (df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date)
-    account_mask = df['Account'].isin(selected_accounts)
-    category_mask = df['Category'].isin(selected_categories)
-    income_mask = df['Type'] == 'Income'
+    account_mask = df_income['Account'].isin(selected_accounts)
+    category_mask = df_income['Category'].isin(selected_categories)
+    subcategory_mask = df_income['Subcategory'].isin(selected_subcategories)
 
-    filtered_df = df[date_mask & account_mask & category_mask & income_mask]
+    filtered_df = df_income[account_mask & category_mask & subcategory_mask]
 
     if filtered_df.empty:
         st.info("No income transactions found for the selected filters.", icon="🧐")
-        # Don't return, allow insights to run
-        pass
+        return
 
-    # --- Key Income Metrics ---
+    # --- Income-Specific KPIs ---
     st.markdown("---")
     st.header("📈 Income Metrics")
-    st.markdown("Here are your top-line earnings for the *period selected above*.")
+    st.markdown("Here are the key numbers for your income in this period.")
 
-    if filtered_df.empty:
-        st.info("No income transactions found for the selected filters.", icon="🧐")
-    else:
-        total_income = filtered_df['Amount'].sum()
-        num_transactions = len(filtered_df)
-        avg_income = filtered_df['Amount'].mean()
-        largest_income = filtered_df['Amount'].max()
+    total_income = filtered_df['Amount'].sum()
+    num_transactions = len(filtered_df)
+    avg_income_event = total_income / num_transactions if num_transactions > 0 else 0
+    largest_income = filtered_df['Amount'].max()
 
-        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-        kpi1.metric("Total Income", f"{currency_symbol}{total_income:,.2f}")
-        kpi2.metric("Number of Income Events", f"{num_transactions}")
-        kpi3.metric("Average Income", f"{currency_symbol}{avg_income:,.2f}")
-        kpi4.metric("Largest Single Income", f"{currency_symbol}{largest_income:,.2f}")
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    with kpi1:
+        with st.container(border=True):
+            st.metric("Total Income", format_currency(total_income, currency_symbol))
+    with kpi2:
+        with st.container(border=True):
+            st.metric("Income Events", f"{num_transactions}")
+    with kpi3:
+        with st.container(border=True):
+            st.metric("Avg. Income Event", format_currency(avg_income_event, currency_symbol))
+    with kpi4:
+        with st.container(border=True):
+            st.metric("Largest Income Event", format_currency(largest_income, currency_symbol))
 
-    # --- Automated Insights Section ---
+    # --- Automated Insights (YTD) ---
     st.markdown("---")
-    st.header("💡 Automated Insights")
-    st.markdown("Analyze your Year-to-Date (YTD) income trends. *Note: Insights are based on the Account and Category filters set above.*")
+    st.header("🤖 Automated Insights (YTD)")
+    st.markdown("See how your income streams are changing compared to the start of the year.")
 
-    ytd_insights = []
-    today = datetime.now().date()
+    # Get all unique months from the filtered data for the selector
+    # Use df_income (only filtered by global date) to get all possible months
+    available_months = sorted(df_income['Date'].dt.to_period('M').unique(), reverse=True)
+    if not available_months:
+        st.info("Not enough data to generate insights.")
+        st.stop()
+
+    month_display_options = [month.strftime('%B %Y') for month in available_months]
+    selected_month_str = st.selectbox("Select a month to analyze", options=month_display_options, key="income_insight_month")
     
-    # Create month selector for insights
-    # We filter the DF for insights based on masks *except* date_mask
-    income_df_for_insights = df[income_mask & account_mask & category_mask]
+    if not selected_month_str:
+        st.stop()
+
+    selected_month_period = available_months[month_display_options.index(selected_month_str)]
+    selected_month_start = selected_month_period.to_timestamp().date()
     
-    if income_df_for_insights.empty:
-        st.info("No income data available to generate insights.")
-    else:
-        # Create a list of available months in "Month YYYY" format
-        available_months = income_df_for_insights['Date'].dt.to_period('M').unique()
-        available_months = sorted(available_months, reverse=True)
-        month_options = [month.strftime('%B %Y') for month in available_months]
+    # Use filtered_df for "This Month"
+    this_month_df = filtered_df[filtered_df['Date'].dt.to_period('M') == selected_month_period]
+    
+    insight_tab1, insight_tab2 = st.tabs(["By Category", "By Subcategory"])
+
+    with insight_tab1:
+        st.subheader(f"Category YTD Insights for {selected_month_str}")
+        group_col = 'Category'
         
-        # Default to current month if available, otherwise most recent
-        current_month_str = today.strftime('%B %Y')
-        if current_month_str in month_options:
-            default_index = month_options.index(current_month_str)
+        this_month_grouped_cat = this_month_df.groupby(group_col)['Amount'].sum()
+        # Use df_income (global date filter only) for historical data
+        all_insight_items_cat = sorted(df_income[df_income['Category'].isin(this_month_grouped_cat.index)]['Category'].unique())
+        
+        if not all_insight_items_cat:
+            st.info(f"No income data for this month at the {group_col} level.")
         else:
-            default_index = 0 # Default to the most recent month
-        
-        selected_month_str = st.selectbox(
-            "Select a month to analyze:",
-            month_options,
-            index=default_index,
-            key="income_insight_month"
-        )
-        
-        # --- Run Insight Calculations ---
-        try:
-            # 1. Year-to-Date (YTD) Insights
-            selected_month_dt = datetime.strptime(selected_month_str, '%B %Y').date()
-            
-            # Get Selected Month's data
-            insight_start_date = selected_month_dt.replace(day=1)
-            _, last_day = calendar.monthrange(insight_start_date.year, insight_start_date.month)
-            insight_end_date = insight_start_date.replace(day=last_day)
-            
-            current_month_mask = (income_df_for_insights['Date'].dt.date >= insight_start_date) & (income_df_for_insights['Date'].dt.date <= insight_end_date)
-            current_month_df = income_df_for_insights[current_month_mask]
-
-            # Get First Month's (Jan) data of the *same year*
-            first_month_start = insight_start_date.replace(month=1, day=1)
-            _, first_month_last_day = calendar.monthrange(first_month_start.year, 1)
-            first_month_end = first_month_start.replace(day=first_month_last_day)
-            
-            first_month_mask = (income_df_for_insights['Date'].dt.date >= first_month_start) & (income_df_for_insights['Date'].dt.date <= first_month_end)
-            first_month_df = income_df_for_insights[first_month_mask]
-            
-            # Aggregate
-            current_month_income = current_month_df.groupby('Category')['Amount'].sum()
-            first_month_income = first_month_df.groupby('Category')['Amount'].sum()
-
-            comparison = pd.DataFrame({'Current': current_month_income, 'Previous': first_month_income}).fillna(0)
-            comparison = comparison[(comparison['Previous'] > 0) | (comparison['Current'] > 0)] # Compare if income in either
-            
-            if not comparison.empty:
-                comparison['Change (%)'] = ((comparison['Current'] - comparison['Previous']) / comparison['Previous']) * 100
-                comparison = comparison.sort_values(by='Change (%)', ascending=False)
+            insights_data_cat = []
+            for item in all_insight_items_cat:
+                this_month_income = this_month_grouped_cat.get(item, 0)
+                # Use df_income for historical calculations
+                first_month_income = calculate_ytd_comparison(df_income, group_col, item, selected_month_start)
+                ytd_avg_income = calculate_ytd_average_income(df_income, group_col, item, selected_month_start) # NEW
                 
-                # Replace inf with 100% for cases where Previous was 0
-                comparison.replace([float('inf'), float('-inf')], 100.0, inplace=True) 
+                insights_data_cat.append({
+                    group_col: item,
+                    "This Month's Income": this_month_income,
+                    "First Month's Income": first_month_income,
+                    "YTD Avg. Income": ytd_avg_income, # NEW
+                    "vs. First Month (%)": (this_month_income - first_month_income) / first_month_income * 100 if first_month_income > 0 else np.inf,
+                    "vs. YTD Avg (%)": (this_month_income - ytd_avg_income) / ytd_avg_income * 100 if ytd_avg_income > 0 else np.inf # NEW
+                })
 
-                top_increases = comparison[comparison['Change (%)'] > 10].head(3)
-                top_decreases = comparison[comparison['Change (%)'] < -10].sort_values(by='Change (%)', ascending=True).head(3)
-
-                if not top_increases.empty:
-                    ytd_insights.append("**Top Increases:**")
-                    for idx, row in top_increases.iterrows():
-                        if row['Previous'] == 0:
-                            ytd_insights.append(f"🔺 **{idx}**: {currency_symbol}{row['Current']:,.0f} (New income source this month)")
-                        else:
-                            ytd_insights.append(f"🔺 **{idx}**: {currency_symbol}{row['Current']:,.0f} (Up {row['Change (%)']:.0f}% from {currency_symbol}{row['Previous']:,.0f})")
-                
-                if not top_decreases.empty:
-                    ytd_insights.append("**Top Decreases:**")
-                    for idx, row in top_decreases.iterrows():
-                        ytd_insights.append(f"🔻 **{idx}**: {currency_symbol}{row['Current']:,.0f} (Down {abs(row['Change (%)']):.0f}% from {currency_symbol}{row['Previous']:,.0f})")
+            insights_df_cat = pd.DataFrame(insights_data_cat).sort_values(by="This Month's Income", ascending=False)
             
-        except Exception as e:
-            st.error(f"Error calculating insights: {e}") # Handle errors gracefully
+            st.dataframe(insights_df_cat, 
+                         column_config={
+                             group_col: st.column_config.TextColumn(group_col),
+                             "This Month's Income": st.column_config.NumberColumn(format=f"{currency_symbol}%.2f"),
+                             "First Month's Income": st.column_config.NumberColumn(format=f"{currency_symbol}%.2f"),
+                             "YTD Avg. Income": st.column_config.NumberColumn(format=f"{currency_symbol}%.2f"), # NEW
+                             "vs. First Month (%)": st.column_config.NumberColumn(format="%.1f%%"),
+                             "vs. YTD Avg (%)": st.column_config.NumberColumn(format="%.1f%%") # NEW
+                         },
+                         use_container_width=True)
 
-        # Display Insights
-        if not ytd_insights:
-            st.info(f"No significant YTD changes detected for **{selected_month_str}** compared to **January {selected_month_dt.year}**.", icon="👍")
+    with insight_tab2:
+        st.subheader(f"Subcategory YTD Insights for {selected_month_str}")
+        group_col = 'Subcategory'
+
+        this_month_grouped_sub = this_month_df.groupby(group_col)['Amount'].sum()
+        # Use df_income (global date filter only) for historical data
+        all_insight_items_sub = sorted(df_income[df_income['Subcategory'].isin(this_month_grouped_sub.index)]['Subcategory'].unique())
+        
+        if not all_insight_items_sub:
+            st.info(f"No income data for this month at the {group_col} level.")
         else:
-            st.subheader(f"YTD Change (vs. January {selected_month_dt.year})")
-            for insight_str in ytd_insights:
-                st.markdown(insight_str)
+            insights_data_sub = []
+            for item in all_insight_items_sub:
+                this_month_income = this_month_grouped_sub.get(item, 0)
+                # Use df_income for historical calculations
+                first_month_income = calculate_ytd_comparison(df_income, group_col, item, selected_month_start)
+                ytd_avg_income = calculate_ytd_average_income(df_income, group_col, item, selected_month_start) # NEW
 
+                insights_data_sub.append({
+                    group_col: item,
+                    "This Month's Income": this_month_income,
+                    "First Month's Income": first_month_income,
+                    "YTD Avg. Income": ytd_avg_income, # NEW
+                    "vs. First Month (%)": (this_month_income - first_month_income) / first_month_income * 100 if first_month_income > 0 else np.inf,
+                    "vs. YTD Avg (%)": (this_month_income - ytd_avg_income) / ytd_avg_income * 100 if ytd_avg_income > 0 else np.inf # NEW
+                })
+
+            insights_df_sub = pd.DataFrame(insights_data_sub).sort_values(by="This Month's Income", ascending=False)
+            
+            st.dataframe(insights_df_sub, 
+                         column_config={
+                             group_col: st.column_config.TextColumn(group_col),
+                             "This Month's Income": st.column_config.NumberColumn(format=f"{currency_symbol}%.2f"),
+                             "First Month's Income": st.column_config.NumberColumn(format=f"{currency_symbol}%.2f"),
+                             "YTD Avg. Income": st.column_config.NumberColumn(format=f"{currency_symbol}%.2f"), # NEW
+                             "vs. First Month (%)": st.column_config.NumberColumn(format="%.1f%%"),
+                             "vs. YTD Avg (%)": st.column_config.NumberColumn(format="%.1f%%") # NEW
+                         },
+                         use_container_width=True)
 
     # --- Visualizations ---
     st.markdown("---")
     st.header("🎨 Visual Analysis")
-    st.markdown("These visuals are based on your main filter selections at the top of the page.")
-
-    if filtered_df.empty:
-        st.info("No data to display for the main filters. Please adjust your date range, accounts, or categories.", icon="🧐")
-        return # Stop here if there's nothing to visualize
 
     col1, col2 = st.columns(2)
-
+    
     with col1:
-        # Income Sources Breakdown (Pie Chart)
-        st.subheader("Income Sources")
-        st.markdown("What's bringing in the money? This chart shows the breakdown of your income by category.")
-        category_income = filtered_df.groupby('Category')['Amount'].sum().sort_values(ascending=False)
+        # --- NEW: Upgraded to Sunburst Chart ---
+        st.subheader("Income Sources Breakdown")
+        st.markdown("See where your income comes from, from broad categories to specific subcategories.")
         
-        if not category_income.empty:
-            fig_pie = go.Figure(data=[go.Pie(
-                labels=category_income.index,
-                values=category_income.values,
-                hole=.4,
-                pull=[0.05] * len(category_income.index)
-            )])
-            fig_pie.update_layout(
-                title_text='Income Breakdown by Category',
-                height=400,
-                legend_title='Category'
+        sunburst_df = filtered_df.copy()
+        sunburst_df['Category'] = sunburst_df['Category'].fillna('Uncategorized')
+        sunburst_df['Subcategory'] = sunburst_df['Subcategory'].fillna('Uncategorized')
+        
+        if sunburst_df['Amount'].sum() > 0:
+            fig_sunburst = px.sunburst(
+                sunburst_df,
+                path=['Subcategory'],#[px.Constant("All Income"), 'Category', 'Subcategory'],
+                values='Amount',
+                color='Amount',
+                color_continuous_scale='Greens',
             )
-            st.plotly_chart(fig_pie, use_container_width=True)
+            fig_sunburst.update_layout(
+                title_text='Income Breakdown by Category & Subcategory',
+                margin=dict(t=50, l=25, r=25, b=25)
+            )
+            fig_sunburst.update_traces(
+                hovertemplate='<b>%{label}</b><br>Total Income: ' + currency_symbol + '%{value:,.2f}<br>Percentage of Parent: %{percentParent:.1%}',
+                textinfo="label+percent root"
+            )
+            st.plotly_chart(fig_sunburst, use_container_width=True)
         else:
-            st.info("No income data to plot for this period.")
+            st.info("No income data to display in the sunburst chart.")
 
     with col2:
-        # Income Trend Over Time (Bar Chart)
+        # --- NEW: Trend chart with granularity toggle ---
         st.subheader("Monthly Income Trend")
-        st.markdown("How does your income change from month to month? This is great for spotting trends, bonuses, or raises.")
-        
-        # Group by month and category
-        monthly_income_df = filtered_df.copy()
-        monthly_income = monthly_income_df.groupby([pd.Grouper(key='Date', freq='MS'), 'Category'])['Amount'].sum().reset_index()
-        monthly_income['month_str'] = monthly_income['Date'].dt.strftime('%B %Y')
-        
-        # Calculate total per month for percentages
-        monthly_total = monthly_income.groupby('month_str')['Amount'].sum().to_dict()
-        
-        # Avoid division by zero if monthly_total is 0
-        monthly_income['Percentage'] = monthly_income.apply(
-            lambda row: (row['Amount'] / monthly_total[row['month_str']]) if monthly_total[row['month_str']] != 0 else 0, 
-            axis=1
-        )
+        group_col_trend = "Subcategory"
 
-        if not monthly_income.empty and monthly_income['Amount'].sum() > 0:
-            fig_month_bar = px.bar(
-                monthly_income, 
-                x='month_str', 
-                y='Amount', 
-                color='Category',
-                text=monthly_income.apply(lambda row: f"{currency_symbol}{row['Amount']:,.0f}<br>({row['Percentage']:.0%})", axis=1),
-                labels={'Amount': 'Total Income', 'month_str': 'Month'},
-                title="Monthly Income by Category"
+        month_df = filtered_df.copy()
+        spend_by_month = month_df.groupby([pd.Grouper(key='Date', freq='MS'), group_col_trend])['Amount'].sum().reset_index()
+        
+        spend_by_month = spend_by_month.sort_values(by='Date')
+        spend_by_month['month_str'] = spend_by_month['Date'].dt.strftime('%B %Y') 
+        
+        chronological_month_list = spend_by_month['month_str'].unique().tolist()
+        
+        if not spend_by_month.empty and spend_by_month['Amount'].sum() > 0:
+            # Create color map
+            all_groups_in_df = sorted(filtered_df[group_col_trend].unique())
+            color_sequence = px.colors.qualitative.Plotly + px.colors.qualitative.G10
+            color_map = {group: color_sequence[i % len(color_sequence)] for i, group in enumerate(all_groups_in_df)}
+
+            fig_month_spend = px.bar(spend_by_month, x='month_str', y='Amount', color=group_col_trend, 
+                                     labels={'Amount': 'Total Income', 'month_str': 'Month'},
+                                     color_discrete_map=color_map,
+                                     title=f"Monthly Income Trend by {group_col_trend}",
+                                     text='Amount' # Add text labels
+                                     )
+            
+            fig_month_spend.update_xaxes(
+                type='category',
+                categoryorder='array',
+                categoryarray=chronological_month_list
             )
-            fig_month_bar.update_layout(
+            
+            # Format text labels
+            fig_month_spend.update_traces(
+                texttemplate=f'{currency_symbol}%{{y:,.0f}}', 
+                textposition='inside'
+            )
+            
+            fig_month_spend.update_layout(
                 xaxis_title='Month', 
                 yaxis_title=f'Amount ({currency_symbol})', 
                 height=400, 
-                xaxis={'tickangle': -45}
+                xaxis={'tickangle': -45}, 
+                barmode='stack',
+                uniformtext_minsize=8, 
+                uniformtext_mode='hide'
             )
-            fig_month_bar.update_traces(textposition='inside')
-            st.plotly_chart(fig_month_bar, use_container_width=True)
+            st.plotly_chart(fig_month_spend, use_container_width=True)
         else:
-            st.info("No income data to plot for this period.")
+            st.info("No data to display for this period.")
 
-    # --- Full Income Transaction Table ---
+    # --- Full Transaction Table ---
     st.markdown("---")
-    st.header("🧾 All Income Transactions")
-    st.markdown("Here is a complete list of all your income for the selected period.")
+    col1, col2, col3 = st.columns([2,1,1])
+    with col1:
+        st.header("🧾 All Income Transactions")
+        st.markdown("Here is a complete list of all your income for the selected period.")
     
-    display_df = filtered_df[['Date', 'Category', 'Amount', 'Account']].copy()
-    display_df['Amount'] = display_df['Amount'].apply(lambda x: f"{currency_symbol}{x:,.2f}")
-    display_df['Date'] = display_df['Date'].dt.strftime('%Y-%m-%d')
+    # --- NEW: Add local filters AND granularity for the transaction table ---
     
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    available_cats_table = ['All'] + sorted(filtered_df['Category'].unique())
+    
+   
+    with col2:
+        table_filter_cat = st.selectbox("Filter by Category", options=available_cats_table, key="table_cat_filter_income")
+    
+    with col3:
+        if table_filter_cat == 'All':
+                    available_subcats_table = ['All'] + sorted(filtered_df['Subcategory'].unique())
+        else:
+            available_subcats_table = ['All'] + sorted(filtered_df[filtered_df['Category'] == table_filter_cat]['Subcategory'].unique())
+        
+        table_filter_subcat = st.selectbox("Filter by Subcategory", options=available_subcats_table, key="table_subcat_filter_income")
+               
+    
+    table_df = filtered_df.copy()
+
+    if table_filter_cat != 'All':
+        table_df = table_df[table_df['Category'] == table_filter_cat]
+    
+    if table_filter_subcat != 'All':
+        table_df = table_df[table_df['Subcategory'] == table_filter_subcat]
+    
+    columns_to_show = ['Date', 'Amount','Category', 'Subcategory', 'Account']
+
+    if 'Subcategory' not in table_df.columns:
+        table_df['Subcategory'] = table_df['Category']
+        
+    st.dataframe(table_df[columns_to_show],
+                 use_container_width=True, 
+                 hide_index=True,
+                 column_config={
+                     "Date": st.column_config.DateColumn("Date", format="YYYY-MM-DD"),
+                     "Amount": st.column_config.NumberColumn("Amount", format=f"{currency_symbol}%.2f"),
+                     "Category": st.column_config.TextColumn("Category"),
+                     "Subcategory": st.column_config.TextColumn("Subcategory"),
+                     "Account": st.column_config.TextColumn("Account")
+                 })
 
 if __name__ == "__main__":
     income_page()
