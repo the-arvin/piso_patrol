@@ -41,6 +41,66 @@ def calculate_ytd_average(df, group_col, item_name, selected_month_start):
     ytd_total = ytd_df['Amount'].sum()
     return ytd_total / months_with_spending
 
+def build_trend_metrics(df, group_col, period_col_name):
+    metrics_df = (
+        df.groupby(group_col)
+        .agg(
+            Total_Spend=('Amount', 'sum'),
+            Transactions=('Amount', 'count'),
+            Max_Amount=('Amount', 'max'),
+            Periods=(period_col_name, 'nunique')
+        )
+        .reset_index()
+    )
+
+    metrics_df['Avg_Period_Spend'] = metrics_df.apply(
+        lambda row: row['Total_Spend'] / row['Periods'] if row['Periods'] > 0 else 0,
+        axis=1
+    )
+
+    return metrics_df.sort_values('Avg_Period_Spend', ascending=False)
+
+def render_trend_summary_cards(
+    metrics_df,
+    group_col,
+    currency_symbol,
+    avg_label="Avg Spend",
+    cards_per_row=2):
+
+    if metrics_df.empty:
+        st.info("No summary metrics to display.")
+        return
+
+    for start_idx in range(0, len(metrics_df), cards_per_row):
+        row_slice = metrics_df.iloc[start_idx:start_idx + cards_per_row]
+        cols = st.columns(cards_per_row)
+
+        for col, (_, row) in zip(cols, row_slice.iterrows()):
+            with col:
+                with st.container(border=True):
+                    st.markdown(f"### {row[group_col]}")
+                    # st.caption("Amount")
+
+                    m1, m2, m3 = st.columns(3)
+
+                    with m1:
+                        st.metric(
+                            avg_label,
+                            f"{currency_symbol}{row['Avg_Period_Spend']:,.2f}"
+                        )
+
+                    with m2:
+                        st.metric(
+                            "Transactions",
+                            f"{int(row['Transactions'])}"
+                        )
+
+                    with m3:
+                        st.metric(
+                            "Max Transaction",
+                            f"{currency_symbol}{row['Max_Amount']:,.2f}"
+                        )
+
 def expenses_page():
     """
     This page provides a detailed analysis of the user's expenses.
@@ -251,22 +311,30 @@ def expenses_page():
     st.subheader("Spending Trends Over Time")
     st.markdown("Analyze your spending patterns from different perspectives. Do you spend more on weekends? Or at the beginning of the month?")
     
-    # Add toggle for Category vs Subcategory
-    trend_granularity = st.radio(
-        "Analyze trends by:",
-        ("Category", "Subcategory"),
-        horizontal=True,
-        key="trend_granularity"
-    )
+    
 
     # Create a consistent color map for the selected granularity
-    if trend_granularity == "Category":
-        all_groups_in_df = sorted(filtered_df['Category'].unique())
-        group_col = 'Category'
-    else:
-        all_groups_in_df = sorted(filtered_df['Subcategory'].unique())
-        group_col = 'Subcategory'
-        
+    col_rad, col_filter = st.columns([1,1])
+    with col_rad:
+        # Add toggle for Category vs Subcategory
+        trend_granularity = st.radio(
+            "Analyze trends by:",
+            ("Category", "Subcategory"),
+            horizontal=True,
+            key="trend_granularity"
+        )
+        if trend_granularity == "Category":
+            all_groups_in_df = sorted(filtered_df['Category'].unique())
+            group_col = 'Category'
+        else:
+            all_groups_in_df = sorted(filtered_df['Subcategory'].unique())
+            group_col = 'Subcategory'
+    
+    with col_filter:
+        highlighted_cohorts = st.multiselect(f"Filter {trend_granularity} to display in highlight ", options=all_groups_in_df, key="trend_group_filter")
+    trend_df = filtered_df.copy()
+    # if highlighted_cohorts:
+    trend_df = trend_df[trend_df[group_col].isin(highlighted_cohorts)]
     color_sequence = px.colors.qualitative.Plotly + px.colors.qualitative.G10 + px.colors.qualitative.Alphabet
     color_map = {group: color_sequence[i % len(color_sequence)] for i, group in enumerate(all_groups_in_df)}
 
@@ -282,6 +350,23 @@ def expenses_page():
                                      title=f"Daily Spending by {trend_granularity}")
             fig_daily_spend.update_layout(xaxis_title='Date', yaxis_title=f'Amount ({currency_symbol})', height=400, barmode='stack')
             st.plotly_chart(fig_daily_spend, use_container_width=True)
+
+            daily_metrics_df = trend_df.copy()
+            daily_metrics_df['period_bucket'] = daily_metrics_df['Date'].dt.date
+
+            daily_metrics = build_trend_metrics(
+                daily_metrics_df,
+                group_col=group_col,
+                period_col_name='period_bucket'
+            )
+
+            render_trend_summary_cards(
+                daily_metrics,
+                group_col=group_col,
+                currency_symbol=currency_symbol,
+                avg_label="Avg per Day"
+            )
+
         else:
             st.info("No data to display for this period.")
 
@@ -299,6 +384,23 @@ def expenses_page():
                                        title=f"Spending by Day of Week (by {trend_granularity})")
             fig_weekday_spend.update_layout(xaxis_title='Day of the Week', yaxis_title=f'Amount ({currency_symbol})', height=400, barmode='stack')
             st.plotly_chart(fig_weekday_spend, use_container_width=True)
+
+            weekday_metrics_df = trend_df.copy()
+            weekday_metrics_df['period_bucket'] = weekday_metrics_df['Date'].dt.day_name()
+
+            daily_metrics = build_trend_metrics(
+                weekday_metrics_df,
+                group_col=group_col,
+                period_col_name='period_bucket'
+            )
+
+            render_trend_summary_cards(
+                daily_metrics,
+                group_col=group_col,
+                currency_symbol=currency_symbol,
+                avg_label="Avg per Weekday"
+            )
+
         else:
             st.info("No data to display for this period.")
 
@@ -314,6 +416,22 @@ def expenses_page():
                                     title=f"Spending by Week of Month (by {trend_granularity})")
             fig_week_spend.update_layout(xaxis_title='Week of the Month', yaxis_title=f'Amount ({currency_symbol})', height=400, barmode='stack')
             st.plotly_chart(fig_week_spend, use_container_width=True)
+
+            week_metrics_df = trend_df.copy()
+            week_metrics_df['period_bucket'] = (week_metrics_df['Date'].dt.day - 1) // 7 + 1
+
+            daily_metrics = build_trend_metrics(
+                week_metrics_df,
+                group_col=group_col,
+                period_col_name='period_bucket'
+            )
+
+            render_trend_summary_cards(
+                daily_metrics,
+                group_col=group_col,
+                currency_symbol=currency_symbol,
+                avg_label="Avg per Week"
+            )
         else:
             st.info("No data to display for this period.")
 
@@ -346,6 +464,23 @@ def expenses_page():
             
             fig_month_spend.update_layout(xaxis_title='Month', yaxis_title=f'Amount ({currency_symbol})', height=400, xaxis={'tickangle': -45}, barmode='stack')
             st.plotly_chart(fig_month_spend, use_container_width=True)
+
+            month_metrics_df = trend_df.copy()
+            month_metrics_df['period_bucket'] = month_metrics_df['Date'].dt.to_period('M').astype(str)
+
+            daily_metrics = build_trend_metrics(
+                month_metrics_df,
+                group_col=group_col,
+                period_col_name='period_bucket'
+            )
+
+            render_trend_summary_cards(
+                daily_metrics,
+                group_col=group_col,
+                currency_symbol=currency_symbol,
+                avg_label="Avg per Month"
+            )
+
         else:
             st.info("No data to display for this period.")
 
